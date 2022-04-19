@@ -11,7 +11,7 @@ dependencies:
       - src: scripts/
     files:
       - src: Makefile
-      - src: eks-worker-al2.json
+      - src: eks-worker-xenial.json
       - src: amazon-eks-nodegroup.yaml
 archive:
   name: amazon-eks-ami.tar.gz

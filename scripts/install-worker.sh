@@ -7,6 +7,13 @@ IFS=$'\n\t'
 
 TEMPLATE_DIR=${TEMPLATE_DIR:-/tmp/worker}
 
+sudo systemctl stop apt-daily.timer
+sudo systemctl stop apt-daily.service
+sudo systemctl kill --kill-who=all apt-daily.service
+sudo systemctl disable apt-daily.service # disable run when system boot
+sudo systemctl disable apt-daily.timer   # disable timer run
+sudo systemctl mask apt-daily.service
+sudo systemctl daemon-reload
 ################################################################################
 ### Validate Required Arguments ################################################
 ################################################################################
@@ -49,34 +56,62 @@ fi
 ### Packages ###################################################################
 ################################################################################
 
+
+# wait until `apt-get updated` has been killed
+while ! (systemctl list-units --all apt-daily.service | egrep -q '(dead|failed)')
+do
+  sleep 1;
+done
+
+
 # Update the OS to begin with to catch up to the latest packages.
-sudo yum update -y
-
+sudo apt-get update -y
 # Install necessary packages
-sudo yum install -y \
-    aws-cfn-bootstrap \
-    awscli \
-    chrony \
-    conntrack \
-    curl \
-    ec2-instance-connect \
-    ipvsadm \
-    jq \
-    nfs-utils \
-    socat \
-    unzip \
-    wget \
-    yum-plugin-versionlock
+sudo apt-get -y install software-properties-common curl python2.7 python-pip
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+echo \
+"deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu \
+$(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+sudo apt-get -y update
+# Installing Python 2.7
+sudo -H pip install https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-latest.tar.gz
 
-# Remove the ec2-net-utils package, if it's installed. This package interferes with the route setup on the instance.
-if yum list installed | grep ec2-net-utils; then sudo yum remove ec2-net-utils -y -q; fi
+# pip3 installation of awscli gives a sane version
+# sudo apt-get -y install python3-pip
+
+
+sudo apt-get -y install \
+     chrony \
+     conntrack \
+     curl \
+     jq \
+     nfs-common \
+     socat \
+     unzip \
+     wget \
+     ca-certificates \
+     gnupg \
+     lsb-release
+
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+unzip awscliv2.zip
+sudo ./aws/install
+
+
+sudo apt-get -y install git binutils
+git clone https://github.com/aws/efs-utils
+cd ./efs-utils
+sudo ./build-deb.sh
+sudo apt-get -y install ./build/amazon-efs-utils*deb
+sudo apt remove -y git binutils
+
 
 ################################################################################
 ### Time #######################################################################
 ################################################################################
 
-# Make sure Amazon Time Sync Service starts on boot.
-sudo chkconfig chronyd on
+
+sudo systemctl enable chrony.service
 
 # Make sure that chronyd syncs RTC clock to the kernel.
 cat <<EOF | sudo tee -a /etc/chrony.conf
@@ -111,29 +146,16 @@ sudo mv $TEMPLATE_DIR/iptables-restore.service /etc/eks/iptables-restore.service
 ### Docker #####################################################################
 ################################################################################
 
-sudo yum install -y yum-utils device-mapper-persistent-data lvm2
+# sudo apt install -y yum-utils device-mapper-persistent-data lvm2
 
 INSTALL_DOCKER="${INSTALL_DOCKER:-true}"
 if [[ "$INSTALL_DOCKER" == "true" ]]; then
-    sudo amazon-linux-extras enable docker
     sudo groupadd -fog 1950 docker
     sudo useradd --gid $(getent group docker | cut -d: -f3) docker
-
-    # install runc and lock version
-    sudo yum install -y runc-${RUNC_VERSION}
-    sudo yum versionlock runc-*
-
-    # install containerd and lock version
-    sudo yum install -y containerd-${CONTAINERD_VERSION}
-    sudo yum versionlock containerd-*
-
-    # install docker and lock version
-    sudo yum install -y docker-${DOCKER_VERSION}*
-    sudo yum versionlock docker-*
+    sudo apt-get install -y runc
+    sudo apt-get install -y containerd.io
+    sudo apt-get install -y docker-ce docker-ce-cli
     sudo usermod -aG docker $USER
-
-    # Remove all options from sysconfig docker.
-    sudo sed -i '/OPTIONS/d' /etc/sysconfig/docker
 
     sudo mkdir -p /etc/docker
     sudo mv $TEMPLATE_DIR/docker-daemon.json /etc/docker/daemon.json
@@ -213,6 +235,7 @@ S3_PATH="s3://$BINARY_BUCKET_NAME/$KUBERNETES_VERSION/$KUBERNETES_BUILD_DATE/bin
 
 BINARIES=(
     kubelet
+    kubectl
     aws-iam-authenticator
 )
 for binary in ${BINARIES[*]} ; do
@@ -328,7 +351,7 @@ fi
 ### SSM Agent ##################################################################
 ################################################################################
 
-sudo yum install -y amazon-ssm-agent
+# sudo yum install -y amazon-ssm-agent
 
 ################################################################################
 ### AMI Metadata ###############################################################
@@ -370,26 +393,19 @@ echo vm.max_map_count=524288 | sudo tee -a /etc/sysctl.conf
 CLEANUP_IMAGE="${CLEANUP_IMAGE:-true}"
 if [[ "$CLEANUP_IMAGE" == "true" ]]; then
     # Clean up yum caches to reduce the image size
-    sudo yum clean all
+    sudo apt clean
     sudo rm -rf \
         $TEMPLATE_DIR  \
         /var/cache/yum
 
     # Clean up files to reduce confusion during debug
     sudo rm -rf \
-        /etc/hostname \
-        /etc/machine-id \
-        /etc/resolv.conf \
-        /etc/ssh/ssh_host* \
-        /home/ec2-user/.ssh/authorized_keys \
-        /root/.ssh/authorized_keys \
         /var/lib/cloud/data \
         /var/lib/cloud/instance \
         /var/lib/cloud/instances \
         /var/lib/cloud/sem \
         /var/lib/dhclient/* \
         /var/lib/dhcp/dhclient.* \
-        /var/lib/yum/history \
         /var/log/cloud-init-output.log \
         /var/log/cloud-init.log \
         /var/log/secure \

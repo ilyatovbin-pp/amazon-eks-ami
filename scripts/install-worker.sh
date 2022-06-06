@@ -154,15 +154,15 @@ if [[ "$INSTALL_DOCKER" == "true" ]]; then
     sudo useradd --gid $(getent group docker | cut -d: -f3) docker
     sudo apt-get install -y runc
     sudo apt-get install -y containerd.io
-    sudo apt-get install -y docker-ce docker-ce-cli
-    sudo usermod -aG docker $USER
+    # sudo apt-get install -y docker-ce docker-ce-cli
+    # sudo usermod -aG docker $USER
 
-    sudo mkdir -p /etc/docker
-    sudo mv $TEMPLATE_DIR/docker-daemon.json /etc/docker/daemon.json
-    sudo chown root:root /etc/docker/daemon.json
+    # sudo mkdir -p /etc/docker
+    # sudo mv $TEMPLATE_DIR/docker-daemon.json /etc/docker/daemon.json
+    # sudo chown root:root /etc/docker/daemon.json
 
     # Enable docker daemon to start on boot.
-    sudo systemctl daemon-reload
+    # sudo systemctl daemon-reload
 fi
 
 ###############################################################################
